@@ -135,32 +135,32 @@ async def procesar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
     resultado = await analizar_sitio_pro(url_usuario)
     await mensaje_espera.edit_text(resultado, parse_mode="HTML")
 
-# --- NUEVO PASAPORTE DE ALTA DISPONIBILIDAD CON FASTAPI ---
+# --- INTEGRACIÓN CON FASTAPI ASÍNCRO MÁXIMA ESTABILIDAD ---
 web_app = FastAPI()
 
 @web_app.get("/")
 async def health_check():
     return {"status": "ok", "message": "Bot activo"}
 
-def iniciar_servidor_web():
-    # Render inyecta dinámicamente el puerto en esta variable de entorno
-    puerto = int(os.environ.get("PORT", 8080))
-    uvicorn.run(web_app, host="0.0.0.0", port=puerto, log_level="warning")
-
-def main():
+@web_app.on_event("startup")
+async def startup_event():
+    # Iniciamos Telegram de forma asíncrona en segundo plano
     TOKEN = "8904800169:AAE-8y1KJpv3KWqSKDVBCtWNtKIee70SjxI"
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, procesar_mensaje))
     
-    print("🤖 Iniciando servidor web FastAPI de alta disponibilidad...")
-    t = threading.Thread(target=iniciar_servidor_web, daemon=True)
-    t.start()
-    
-    time.sleep(2)
-    
-    print("🤖 Bot definitivo iniciado con éxito en Render...")
-    app.run_polling(drop_pending_updates=True, close_loop=False)
+    print("🤖 Inicializando bucle de Telegram en segundo plano...")
+    await app.initialize()
+    await app.updater.start_polling(drop_pending_updates=True)
+    await app.start()
+    print("🤖 Bot de Telegram escuchando con éxito...")
+
+def main():
+    # El proceso principal pertenece a Uvicorn para que Render valide el puerto de inmediato
+    puerto = int(os.environ.get("PORT", 8080))
+    print("🤖 Iniciando servidor web FastAPI en puerto dinámico...")
+    uvicorn.run(web_app, host="0.0.0.0", port=puerto, log_level="warning")
 
 if __name__ == '__main__':
     main()
