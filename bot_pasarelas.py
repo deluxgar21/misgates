@@ -3,9 +3,10 @@ import time
 import httpx
 import threading
 import os
-from http.server import BaseHTTPRequestHandler, HTTPServer
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from fastapi import FastAPI
+import uvicorn
 
 # Configuración de Logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -134,26 +135,17 @@ async def procesar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
     resultado = await analizar_sitio_pro(url_usuario)
     await mensaje_espera.edit_text(resultado, parse_mode="HTML")
 
-# --- SERVIDOR WEB AUXILIAR CORREGIDO (HILO INDEPENDIENTE) ---
-class HealthCheckHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        try:
-            self.send_response(200)
-            self.send_header("Content-type", "text/plain")
-            self.send_header("Connection", "close") 
-            self.end_headers()
-            self.wfile.write(b"Bot activo")
-        except Exception:
-            pass
-            
-    def log_message(self, format, *args):
-        return
+# --- NUEVO PASAPORTE DE ALTA DISPONIBILIDAD CON FASTAPI ---
+web_app = FastAPI()
+
+@web_app.get("/")
+async def health_check():
+    return {"status": "ok", "message": "Bot activo"}
 
 def iniciar_servidor_web():
-    import os
+    # Render inyecta dinámicamente el puerto en esta variable de entorno
     puerto = int(os.environ.get("PORT", 8080))
-    server = HTTPServer(("0.0.0.0", puerto), HealthCheckHandler)
-    server.serve_forever()
+    uvicorn.run(web_app, host="0.0.0.0", port=puerto, log_level="warning")
 
 def main():
     TOKEN = "8904800169:AAE-8y1KJpv3KWqSKDVBCtWNtKIee70SjxI"
@@ -161,13 +153,13 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, procesar_mensaje))
     
-    print("🤖 Iniciando servidor web de soporte en puerto dinamico...")
+    print("🤖 Iniciando servidor web FastAPI de alta disponibilidad...")
     t = threading.Thread(target=iniciar_servidor_web, daemon=True)
     t.start()
     
     time.sleep(2)
     
-    print("🤖 Bot definitivo iniciado con exito...")
+    print("🤖 Bot definitivo iniciado con éxito en Render...")
     app.run_polling(drop_pending_updates=True, close_loop=False)
 
 if __name__ == '__main__':
