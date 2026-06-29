@@ -1,12 +1,10 @@
 import logging
 import time
 import httpx
-import threading
 import os
-import asyncio
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 import uvicorn
 
 # Configuración de Logging
@@ -136,39 +134,47 @@ async def procesar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
     resultado = await analizar_sitio_pro(url_usuario)
     await mensaje_espera.edit_text(resultado, parse_mode="HTML")
 
-# --- INTEGRACIÓN CON FASTAPI + TELEGRAM EN HILO AISLADO ---
+# --- ARQUITECTURA NATIVA WEBHOOK CON FASTAPI ---
 web_app = FastAPI()
+bot_app = None  # Instancia global de la aplicación de Telegram
 
 @web_app.get("/")
 async def health_check():
-    return {"status": "ok", "message": "Bot activo"}
+    # Respuesta inmediata para UptimeRobot
+    return {"status": "ok", "message": "Bot activo y escuchando"}
 
-def correr_bot_en_hilo():
-    # Creamos y asignamos un nuevo bucle de eventos exclusivo para este hilo secundario
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    
+@web_app.post("/webhook")
+async def webhook_handler(request: Request):
+    # Recibe los eventos de actualización enviados directamente por Telegram
+    global bot_app
+    if bot_app:
+        data = await request.json()
+        update = Update.de_json(data, bot_app.bot)
+        await bot_app.process_update(update)
+    return Response(status_code=200)
+
+@web_app.on_event("startup")
+async def startup_event():
+    global bot_app
     TOKEN = "8904800169:AAE-8y1KJpv3KWqSKDVBCtWNtKIee70SjxI"
-    app = Application.builder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, procesar_mensaje))
+    URL_RENDER = "https://onrender.com"
     
-    print("🤖 Iniciando Polling de Telegram en hilo aislado...")
-    loop.run_until_complete(app.initialize())
-    loop.run_until_complete(app.updater.start_polling(drop_pending_updates=True))
-    loop.run_until_complete(app.start())
+    # Inicialización del bot en modo escucha Webhook
+    bot_app = Application.builder().token(TOKEN).build()
+    bot_app.add_handler(CommandHandler("start", start))
+    bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, procesar_mensaje))
     
-    # Mantenemos el hilo de Telegram escuchando para siempre
-    loop.run_forever()
+    await bot_app.initialize()
+    await bot_app.start()
+    
+    # Vinculamos la URL de tu Render con los servidores oficiales de Telegram
+    await bot_app.bot.set_webhook(url=f"{URL_RENDER}/webhook", drop_pending_updates=True)
+    print("🤖 Webhook de Telegram configurado con éxito en Render...")
 
 def main():
-    # 1. Arrancamos Telegram en segundo plano para no estorbar el inicio de la web
-    t = threading.Thread(target=correr_bot_en_hilo, daemon=True)
-    t.start()
-    
-    # 2. El proceso principal ejecuta Uvicorn para abrir el puerto de Render al instante
+    # Servidor Web principal ocupando la terminal de forma directa y limpia
     puerto = int(os.environ.get("PORT", 8080))
-    print("🤖 Iniciando servidor web FastAPI en puerto dinámico...")
+    print("🤖 Iniciando servidor web FastAPI en Render...")
     uvicorn.run(web_app, host="0.0.0.0", port=puerto, log_level="warning")
 
 if __name__ == '__main__':
