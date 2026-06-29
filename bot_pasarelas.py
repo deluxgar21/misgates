@@ -3,6 +3,7 @@ import time
 import httpx
 import threading
 import os
+import asyncio
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from fastapi import FastAPI
@@ -135,29 +136,37 @@ async def procesar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
     resultado = await analizar_sitio_pro(url_usuario)
     await mensaje_espera.edit_text(resultado, parse_mode="HTML")
 
-# --- INTEGRACIÓN CON FASTAPI ASÍNCRO MÁXIMA ESTABILIDAD ---
+# --- INTEGRACIÓN CON FASTAPI + TELEGRAM EN HILO AISLADO ---
 web_app = FastAPI()
 
 @web_app.get("/")
 async def health_check():
     return {"status": "ok", "message": "Bot activo"}
 
-@web_app.on_event("startup")
-async def startup_event():
-    # Iniciamos Telegram de forma asíncrona en segundo plano
+def correr_bot_en_hilo():
+    # Creamos y asignamos un nuevo bucle de eventos exclusivo para este hilo secundario
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
     TOKEN = "8904800169:AAE-8y1KJpv3KWqSKDVBCtWNtKIee70SjxI"
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, procesar_mensaje))
     
-    print("🤖 Inicializando bucle de Telegram en segundo plano...")
-    await app.initialize()
-    await app.updater.start_polling(drop_pending_updates=True)
-    await app.start()
-    print("🤖 Bot de Telegram escuchando con éxito...")
+    print("🤖 Iniciando Polling de Telegram en hilo aislado...")
+    loop.run_until_complete(app.initialize())
+    loop.run_until_complete(app.updater.start_polling(drop_pending_updates=True))
+    loop.run_until_complete(app.start())
+    
+    # Mantenemos el hilo de Telegram escuchando para siempre
+    loop.run_forever()
 
 def main():
-    # El proceso principal pertenece a Uvicorn para que Render valide el puerto de inmediato
+    # 1. Arrancamos Telegram en segundo plano para no estorbar el inicio de la web
+    t = threading.Thread(target=correr_bot_en_hilo, daemon=True)
+    t.start()
+    
+    # 2. El proceso principal ejecuta Uvicorn para abrir el puerto de Render al instante
     puerto = int(os.environ.get("PORT", 8080))
     print("🤖 Iniciando servidor web FastAPI en puerto dinámico...")
     uvicorn.run(web_app, host="0.0.0.0", port=puerto, log_level="warning")
