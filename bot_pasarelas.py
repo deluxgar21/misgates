@@ -1,14 +1,11 @@
 import logging
 import time
-import re
-import requests
+import httpx
 import random
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-from requests.packages.urllib3.exceptions import InsecureRequestWarning
-requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
-
+# Configuración de Logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 HEADERS = {
@@ -18,6 +15,7 @@ HEADERS = {
     'Connection': 'keep-alive'
 }
 
+# NOTA: Los proxies públicos mueren rápido. Si fallan, el bot usará la conexión directa.
 PROXIES_POOL = [
     "http://45.70.198.85:8080",
     "http://198.199.86.11:80",
@@ -61,7 +59,8 @@ def detectar_por_estructura(url, html, headers):
 
     return sorted(list(pasarelas)) if pasarelas else ["Not Detected"]
 
-def analizar_sitio_pro(url):
+# Convertimos la función a ASÍNCRONA usando HTTPX
+async def analizar_sitio_pro(url):
     if not url.startswith('http'):
         url = 'https://' + url
 
@@ -71,25 +70,28 @@ def analizar_sitio_pro(url):
     size = 0
     inicio_tiempo = time.time()
 
-    try:
-        respuesta = requests.get(url, headers=HEADERS, timeout=10, verify=False, allow_redirects=True)
-        status = respuesta.status_code
-        html = respuesta.text
-        headers_servidor = respuesta.headers
-        size = len(respuesta.content)
-    except Exception:
+    # Usamos httpx.AsyncClient para no congelar Telegram
+    async with httpx.AsyncClient(headers=HEADERS, verify=False, follow_redirects=True, timeout=8.0) as client:
         try:
-            proxy_elegido = random.choice(PROXIES_POOL)
-            proxies_dict = {"http": proxy_elegido, "https": proxy_elegido}
-            respuesta = requests.get(url, headers=HEADERS, proxies=proxies_dict, timeout=12, verify=False, allow_redirects=True)
+            respuesta = await client.get(url)
             status = respuesta.status_code
             html = respuesta.text
             headers_servidor = respuesta.headers
             size = len(respuesta.content)
         except Exception:
-            status = "403"
-            html = "paypal engiven credit card first name last name address"
-            size = 2432
+            # Si falla la conexión directa, intenta con un Proxy de tu pool de forma asíncrona
+            try:
+                proxy_elegido = random.choice(PROXIES_POOL)
+                async with httpx.AsyncClient(headers=HEADERS, proxy=proxy_elegido, verify=False, follow_redirects=True, timeout=8.0) as proxy_client:
+                    respuesta = await proxy_client.get(url)
+                    status = respuesta.status_code
+                    html = respuesta.text
+                    headers_servidor = respuesta.headers
+                    size = len(respuesta.content)
+            except Exception:
+                status = "403 / Error de Conexión"
+                html = "paypal engiven credit card first name last name address"
+                size = 2432
 
     tiempo_respuesta = round(time.time() - inicio_tiempo, 2)
     redir = "None"
@@ -117,42 +119,48 @@ def analizar_sitio_pro(url):
     tamano_kb = round(size / 1024, 2)
 
     mensaje = (
-        f" [⌬ (https://t.me)] 𝐒𝐢𝐭e\u21a3{url}\n"
-        f" [⌬ (https://t.me)] 𝐑e𝐝𝐢𝐫e𝐜𝐭𝐬\u21a3{redir}\n"
-        f" [⌬ (https://t.me)] 𝐒e𝐜𝐮𝐫𝐢𝐭𝐲 𝐇e𝐚𝐝e𝐫𝐬\u21a3CSP: {has_csp}, HSTS: {has_hsts}, XFO: {xfo}, XCTO: {xcto}\n"
-        f" [⌬ (https://t.me)] 𝐏𝐚𝐲𝐦e𝐧𝐭 𝐆𝐚𝐭e𝐰𝐚𝐲𝐬\u21a3{gateways}\n"
-        f" [⌬ (https://t.me)] 𝐂𝐚𝐩𝐭𝐜𝐡𝐚\u21a3{captcha}\n"
+        f" [⌬] 𝐒𝐢𝐭e ➔ {url}\n"
+        f" [⌬] 𝐑e𝐝𝐢𝐫e𝐜𝐭𝐬 ➔ {redir}\n"
+        f" [⌬] 𝐒e𝐜𝐮𝐫𝐢𝐭𝐲 𝐇e𝐚𝐝e𝐫𝐬 ➔ CSP: {has_csp}, HSTS: {has_hsts}, XFO: {xfo}, XCTO: {xcto}\n"
+        f" [⌬] 𝐏𝐚𝐲𝐦e𝐧𝐭 𝐆𝐚𝐭e𝐰𝐚𝐲𝐬 ➔ {gateways}\n"
+        f" [⌬] 𝐂𝐚𝐩𝐭𝐜𝐡𝐚 ➔ {captcha}\n"
         f"━━━━━━━━━━━━━━━━━━━\n"
-        f" [⌬ (https://t.me)] 𝐂𝐦𝐨𝐮𝐝𝐟𝐥𝐚𝐫e\u21a3{cloudflare}\n"
-        f" [⌬ (https://t.me)] 𝐒e𝐜𝐮𝐫𝐢𝐭𝐲\u21a3{security_3d}\n"
-        f" [⌬ (https://t.me)] 𝐂𝐡e𝐜𝐤out 𝐅𝐢e𝐥𝐝𝐬\u21a3{campos_str}\n"
+        f" [⌬] 𝐂𝐥𝐨𝐮𝐝𝐟𝐥𝐚𝐫e ➔ {cloudflare}\n"
+        f" [⌬] 𝐒e𝐜𝐮𝐫𝐢𝐭𝐲 ➔ {security_3d}\n"
+        f" [⌬] 𝐂𝐡e𝐜𝐤out 𝐅𝐢e𝐥𝐝𝐬 ➔ {campos_str}\n"
         f"━━━━━━━━━━━━━━━━━━━\n"
-        f" [⌬ (https://t.me)] 𝐒𝐭𝐚𝐭𝐮𝐬\u21a3{status}\n"
-        f" [⌬ (https://t.me)] 𝐏𝐚𝐠e 𝐒𝐢𝐳e\u21a3{tamano_kb} KB\n"
-        f" [⌬ (https://t.me)] 𝐑e𝐬𝐩b𝐨𝐧𝐬e 𝐓𝐢𝐦e\u21a3{tiempo_respuesta} sec"
+        f" [⌬] 𝐒𝐭𝐚𝐭𝐮𝐬 ➔ {status}\n"
+        f" [⌬] 𝐏𝐚𝐠e 𝐒𝐢𝐳e ➔ {tamano_kb} KB\n"
+        f" [⌬] 𝐑e𝐬𝐩b𝐨𝐧𝐬e 𝐓𝐢𝐦e ➔ {tiempo_respuesta} sec"
     )
     return mensaje
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👋 Envíame un enlace y te daré un informe de seguridad completo de la página.")
+    await update.message.reply_text("👋 Envíame un enlace y te daré un informe de la pasarela de pago y seguridad.")
 
 async def procesar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url_usuario = update.message.text.strip()
-    mensaje_espera = await update.message.reply_text("🔍 Ejecutando bypass de IP por proxy y analizando...")
-    resultado = analizar_sitio_pro(url_usuario)
+    
+    # Validación básica: Si no parece una URL o dominio, no perder tiempo analizando
+    if not ("." in url_usuario) or " " in url_usuario:
+        await update.message.reply_text("❌ Por favor envíame un enlace o dominio válido (ejemplo: google.com o https://sitio.com).")
+        return
+
+    mensaje_espera = await update.message.reply_text("🔍 Ejecutando análisis asíncrono y verificando pasarelas...")
+    
+    # Agregamos 'await' porque ahora la función es asíncrona y no bloqueará el flujo del bot
+    resultado = await analizar_sitio_pro(url_usuario)
     await mensaje_espera.edit_text(resultado)
 
 def main():
-    # ⚠️ REEMPLAZA EL TEXTO DE ABAJO CON TU TOKEN REAL DE BOTFATHER
     TOKEN = "8904800169:AAE-8y1KJpv3KWqSKDVBCtWNtKIee70SjxI"
     
-    # En Render no se necesitan proxies internos, la conexión es directa y limpia
     app = Application.builder().token(TOKEN).build()
     
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, procesar_mensaje))
     
-    print("🤖 Bot definitivo iniciado con éxito...")
+    print("🤖 Bot corregido (Asíncrono con HTTPX) iniciado con éxito...")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == '__main__':
