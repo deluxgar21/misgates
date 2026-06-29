@@ -134,17 +134,23 @@ async def procesar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
     resultado = await analizar_sitio_pro(url_usuario)
     await mensaje_espera.edit_text(resultado, parse_mode="HTML")
 
-# --- SERVIDOR WEB AUXILIAR PARA RENDER ---
+# --- SERVIDOR WEB AUXILIAR CORREGIDO (HILO INDEPENDIENTE) ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-type", "text/plain")
-        self.end_headers()
-        self.wfile.write(b"Bot activo")
+        try:
+            self.send_response(200)
+            self.send_header("Content-type", "text/plain")
+            self.send_header("Connection", "close") 
+            self.end_headers()
+            self.wfile.write(b"Bot activo")
+        except Exception:
+            pass
+            
     def log_message(self, format, *args):
         return
 
 def iniciar_servidor_web():
+    import os
     puerto = int(os.environ.get("PORT", 8080))
     server = HTTPServer(("0.0.0.0", puerto), HealthCheckHandler)
     server.serve_forever()
@@ -155,11 +161,14 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, procesar_mensaje))
     
-    print("🤖 Iniciando servidor web de soporte...")
-    threading.Thread(target=iniciar_servidor_web, daemon=True).start()
+    print("🤖 Iniciando servidor web de soporte en puerto dinamico...")
+    t = threading.Thread(target=iniciar_servidor_web, daemon=True)
+    t.start()
     
-    print("🤖 Bot definitivo iniciado con éxito...")
-    app.run_polling(drop_pending_updates=True)
+    time.sleep(2)
+    
+    print("🤖 Bot definitivo iniciado con exito...")
+    app.run_polling(drop_pending_updates=True, close_loop=False)
 
 if __name__ == '__main__':
     main()
